@@ -1,0 +1,161 @@
+---
+title: "Practical Machine Learning - Project"
+output: html_document
+---
+ 
+## Introduction
+In this project, we are going to use Human Activity Recognition (HAR) data on accelerometers on the belt, forearm, arm and dumbell of 6 participants to predict the way they will perform various weight lifting exercise - based on the signals captured by wearable movement sensors. 
+
+In particular, a random forest model is developed to address this issue. Data for this project originated from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+```{r,echo=FALSE }
+echo = TRUE
+cache = TRUE
+```
+
+## Data Loading
+
+Load relevant libraries:
+
+```{r,warning=FALSE,message=FALSE}
+library(caret);library(randomForest)
+```
+
+Download training and testing datasets:
+
+```{r,echo=FALSE, cache=FALSE}
+
+setwd("C:/Users/ISABELLA/Documents/Coursera/Data Science Specialization/08 - Practical Machine Learning/Problem Sets/Course Project")
+```
+
+```{r,warning=FALSE,message=FALSE}
+
+# setwd() set your working directory
+
+if(!file.exists("./data")){dir.create("./data")}
+
+trainUrl= "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+testUrl= "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+
+download.file(trainUrl, destfile = "./data/pml-training.csv",method ="curl")
+download.file(testUrl, destfile = "./data/pml-testing.csv",method ="curl")
+```
+
+Read data:
+
+```{r,warning=FALSE,message=FALSE}
+trainData = read.csv('./data/pml-training.csv',header=TRUE,na.strings=c("NA","#DIV/0!", ""))
+testData = read.csv('./data/pml-testing.csv',header=TRUE,na.strings=c("NA","#DIV/0!", ""))
+```
+
+```{r}
+str(trainData);str(testData)
+```
+
+The training data set contains 19622 observations and 160 variables, while the testing data set contains 20 observations and 160 variables. The outcome variable that needs to be predicted is the "classe" variable in the training set
+
+## Data Preprocessing
+
+In this section, we are going to perform some basic data preprocessing.
+
+Removing NA variables:
+
+```{r}
+trainData = trainData[, colSums(is.na(trainData)) == 0]
+testData = testData[, colSums(is.na(testData)) == 0]
+```
+
+Removing irrelevant variables - that do not contribute much to the accelerometer measurements:
+
+```{r}
+trainData = trainData[, !grepl("^X|timestamp|window|user_name", names(trainData))]
+testData = testData[, !grepl("^X|timestamp|window|user_name", names(testData))]
+```
+
+Converting variable type to numeric - with the exception of the "classe" variable, that is factor type:
+
+```{r}
+for (i in c(2:ncol(trainData)-1)) {
+        
+        trainData[,i] = as.numeric(as.character(trainData[,i]))
+        testData[,i] = as.numeric(as.character(testData[,i]))
+}
+```
+
+Check for zero and near-zero variance variables: 
+
+```{r}
+zeroVar = nearZeroVar(trainData, saveMetrics = TRUE)
+zeroVar[, (zeroVar$zeroVar == TRUE | zeroVar$nzv == TRUE)]
+```
+
+No variables are detected as having zero or near-zero variance.
+
+```{r}
+dim(trainData);dim(testData)
+```
+
+Our training dataset now contains 19622 observations and 53 variables, while the testing data set contains 20 observations and 53 variables.
+
+## Data Slicing
+
+The study design requires a cross validation set. Therefore, the trainData dataset is partitioned into two subsamples: a training data set (70%) and a validation data set (30%).
+
+```{r}
+set.seed(22519)  # set the seed for reproducibility
+
+inTrain = createDataPartition(y=trainData$classe, p=0.70, list=FALSE)
+training = trainData[inTrain, ]
+validation = trainData[-inTrain, ]
+
+dim(training);dim(validation)
+```
+
+## Building Random Forests Model
+
+As predictive model for activity recognition we choose Random Forest algorithm with 5-fold cross validation as the resampling method. This method automatically selects important variables and it is robust to correlated covariates and outliers in general. It is also easy to interpret and it displays better performance in non-linear settings.
+
+
+```{r, echo=FALSE}
+t.Control = trainControl(method="cv", number=5, allowParallel =TRUE)
+model.Rf = train(classe ~ ., data=training, method="rf", trControl = t.Control, ntree = 250)
+```
+
+```{r}
+model.Rf$finalModel
+```
+
+With the varImp() function we can identify the importance of each of the 52 predictors in explaining our model:
+
+```{r}
+Rf.imp = varImp(model.Rf, scale = FALSE)
+plot(Rf.imp, top=10, main = "Importance of the Top 10 Predictors")
+```
+
+The plot shows that the 4 most important variables according to the model fit are "roll_belt", "pitch_forearm", "yaw_belt", and "pitch_belt".
+
+## Cross - validation
+
+Cross validation is performed by applying to the validation set the Random Forest model we developed on the training set. We use the predict() function to get predicted "classe" outcomes on the validation set. 
+
+```{r}
+pred.Val = predict(model.Rf,validation)
+confusionMatrix(validation$classe,pred.Val)
+
+accuracy.Val = confusionMatrix(validation$classe,pred.Val)$overall[1]
+out_of_sample_error = 1 - accuracy.Val
+print(cbind(accuracy.Val,out_of_sample_error))
+```
+
+The cross validation results show that the random forest model has very strong predictive power. Its estimated accuracy is 0.993 with 95% confidence and the estimated out-of-sample error equals 0.007. The P Value is small (< 2.2e-16), indicating a statistically significant test. The Kappa statistic is high (0.9912), suggesting a near complete agreement (close to 1) and the class (A,B,C,D,E) sensitivity and specificity are high (>.99%).
+
+## Predicting on the Testing set
+
+Once the model has been built, we apply our ML algorithm to predict the outcome variable for 20 different test cases available in the original testing dataset. The column names are not consistent between the test and training data, so we exclude the "problem_id" variable from the testing set.
+
+```{r}
+pred.Test = predict(model.Rf,testData[, -length(names(testData))])
+pred.Test
+```
+
+The vector pred.Test contains the 20 outcome predictions that are submitted for grading via the Coursera website with a separate process: it turns out that our RF model correctly predicts 20 cases out of 20 - confirming its strong predictive power. 
